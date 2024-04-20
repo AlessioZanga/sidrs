@@ -64,15 +64,8 @@ fn path(g: &Array2<bool>) -> Array2<bool> {
     p
 }
 
-// Check if x and y are d-separated by z in G.
-fn d_sep(g: &Array2<bool>, x: usize, y: usize, z: &[usize]) -> bool {
-    // Make Z a set.
-    let z: FxIndexSet<_> = z.iter().cloned().collect();
-    // If X or Y are in Z, then X and Y are independent.
-    if z.contains(&x) || z.contains(&y) {
-        return true;
-    }
-
+// Get the reachable vertices from x given z in a graph G.
+fn reachable(g: &Array2<bool>, x: usize, z: &[usize]) -> FxIndexSet<usize> {
     // Phase I - Get all ancestors of Z.
     let an_z: FxIndexSet<_> = z.iter().flat_map(|&z| An!(g, z)).collect();
 
@@ -87,10 +80,6 @@ fn d_sep(g: &Array2<bool>, x: usize, y: usize, z: &[usize]) -> bool {
 
     // While there are vertices to be visited.
     while let Some((w, d)) = to_be_visited.pop_front() {
-        // Check if current vertex is Y.
-        if w == y {
-            return false;
-        }
         // Check if current vertex has already been visited.
         if visited.contains(&(w, d)) {
             continue;
@@ -116,7 +105,8 @@ fn d_sep(g: &Array2<bool>, x: usize, y: usize, z: &[usize]) -> bool {
         }
     }
 
-    true
+    // Return the set of visited vertices.
+    visited.into_iter().map(|(w, _)| w).collect()
 }
 
 fn _sid(g: &Array2<bool>, h: &Array2<bool>) -> usize {
@@ -132,6 +122,9 @@ fn _sid(g: &Array2<bool>, h: &Array2<bool>) -> usize {
     for i in 0..n {
         let g_pa_i: Vec<usize> = Pa!(g, i).collect();
         let h_pa_i: Vec<usize> = Pa!(h, i).collect();
+
+        // Compute the vertices reachable from i in G.
+        let r = reachable(g, i, &h_pa_i);
 
         for j in (0..n).filter(|&j| j != i) {
             let g_ij_null = !p[[i, j]];
@@ -161,7 +154,7 @@ fn _sid(g: &Array2<bool>, h: &Array2<bool>) -> usize {
                 continue;
             }
 
-            if !d_sep(g, i, j, &h_pa_i) {
+            if r.contains(&j) {
                 sid += 1;
             }
         }
@@ -215,12 +208,12 @@ mod test {
             [false, false, true],
             [false, false, false]
         ];
-        assert!(d_sep(&g, 0, 2, &[1]));
-        assert!(d_sep(&g, 0, 2, &[0]));
-        assert!(d_sep(&g, 0, 2, &[2]));
-        assert!(d_sep(&g, 0, 2, &[0, 1]));
-        assert!(d_sep(&g, 0, 2, &[0, 2]));
-        assert!(d_sep(&g, 0, 2, &[1, 2]));
+        assert!(reachable(&g, 0, &[1]).iter().eq(&[0, 1]));
+        assert!(reachable(&g, 0, &[0]).iter().eq(&[0]));
+        assert!(reachable(&g, 0, &[2]).iter().eq(&[0, 1, 2]));
+        assert!(reachable(&g, 0, &[0, 1]).iter().eq(&[0]));
+        assert!(reachable(&g, 0, &[0, 2]).iter().eq(&[0]));
+        assert!(reachable(&g, 0, &[1, 2]).iter().eq(&[0, 1]));
     }
 
     #[test]
