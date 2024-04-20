@@ -258,23 +258,47 @@ mod test {
 }
 
 // Export the `sid` function to R.
-use extendr_api::prelude::*;
+use extendr_api::{prelude::*, ToVectorValue};
+
+/// Convert an Robj to an Array2<bool>.
+fn robj_to_array2_bool(obj: Robj) -> Array2<bool> {
+    // Invoke `as.matrix`.
+    let obj = R!("as.matrix({{obj}})").expect("Failed to invoke `as.matrix` on R object");
+    // Get underlying shape and data vector.
+    match obj.rtype() {
+        // RMatrix<Rfloat> => Array2<bool>
+        Rtype::Doubles => {
+            let obj: RMatrix<Rfloat> = obj
+                .as_matrix()
+                .expect("Failed to convert to RMatrix<Rfloat>");
+            Array::from_iter(obj.data().iter().map(|&x| x.to_real() > 0.)).into_shape(*obj.dim())
+        }
+        // RMatrix<Rint> => Array2<bool>
+        Rtype::Integers => {
+            let obj: RMatrix<Rint> = obj.as_matrix().expect("Failed to convert to RMatrix<Rint>");
+            Array::from_iter(obj.data().iter().map(|&x| x.to_integer() > 0)).into_shape(*obj.dim())
+        }
+        // RMatrix<Rbool> => Array2<bool>
+        Rtype::Logicals => {
+            let obj: RMatrix<Rbool> = obj
+                .as_matrix()
+                .expect("Failed to convert to RMatrix<Rbool>");
+            Array::from_iter(obj.data().iter().map(|&x| x.to_bool())).into_shape(*obj.dim())
+        }
+        _ => panic!(
+            "Invalid R object class `{:?}` with type `{:?}`",
+            obj.class(),
+            obj.rtype()
+        ),
+    }
+    .expect("Failed to convert to Array2<bool>")
+}
 
 /// Compute the SID between two adjacency matrices.
 /// @export
 #[extendr]
 fn sid(g: Robj, h: Robj) -> usize {
-    // Convert R objects to RMatrix.
-    let g: RMatrix<Rbool> = g.as_matrix().unwrap();
-    let h: RMatrix<Rbool> = h.as_matrix().unwrap();
-    // Get dims and data.
-    let (g_dim, g_data) = (*g.dim(), g.data().into_iter().map(|x| x.to_bool()));
-    let (h_dim, h_data) = (*h.dim(), h.data().into_iter().map(|x| x.to_bool()));
-    // Convert RMatrix to ndarray.
-    let g = Array::from_iter(g_data).into_shape(g_dim).unwrap();
-    let h = Array::from_iter(h_data).into_shape(h_dim).unwrap();
-    // Compute the SID.
-    _sid(&g, &h)
+    _sid(&robj_to_array2_bool(g), &robj_to_array2_bool(h))
 }
 
 // Macro to generate exports.
