@@ -1,10 +1,10 @@
 Package: sidrs
-Title: Compute the SID between two Adjacency Matrices.
+Title: Compute the Structural Intervention Distance (SID) for DAGs.
 Version: 0.1.0
 Authors@R: 
     person("Alessio", "Zanga", , "alessio.zanga@outlook.it", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0003-4423-2121"))
-Description: Compute the SID between two adjacency matrices..
+Description: Compute the structural intervention distance for DAGs.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
