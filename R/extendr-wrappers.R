@@ -15,5 +15,9 @@ NULL
 #' @export
 sid <- function(g, h) .Call(wrap__sid, g, h)
 
+#' Compute the SID between two adjacency matrices in parallel.
+#' @export
+par_sid <- function(g, h) .Call(wrap__par_sid, g, h)
+
 
 # nolint end

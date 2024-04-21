@@ -1,7 +1,8 @@
-use std::{collections::VecDeque, hash::BuildHasherDefault};
+use std::{collections::VecDeque, hash::BuildHasherDefault, usize};
 
 use indexmap::IndexSet;
 use ndarray::prelude::*;
+use rayon::prelude::*;
 use rustc_hash::FxHasher;
 
 pub type FxIndexSet<T> = IndexSet<T, BuildHasherDefault<FxHasher>>;
@@ -41,7 +42,7 @@ macro_rules! An {
 }
 
 // Compute the path matrix of a DAG G.
-fn path(g: &Array2<bool>) -> Array2<bool> {
+fn _path(g: &Array2<bool>) -> Array2<bool> {
     // Get the number of vertices in G.
     let n = g.shape()[1];
     // Initialize the path matrix.
@@ -63,7 +64,7 @@ fn path(g: &Array2<bool>) -> Array2<bool> {
 }
 
 // Get the reachable vertices from x given z in a graph G.
-fn reachable(g: &Array2<bool>, x: usize, z: &[usize]) -> FxIndexSet<usize> {
+fn _reach(g: &Array2<bool>, x: usize, z: &[usize]) -> FxIndexSet<usize> {
     // Phase I - Get all ancestors of Z.
     let an_z: FxIndexSet<_> = z.iter().flat_map(|&z| An!(g, z)).collect();
 
@@ -107,58 +108,96 @@ fn reachable(g: &Array2<bool>, x: usize, z: &[usize]) -> FxIndexSet<usize> {
     visited.into_iter().map(|(w, _)| w).collect()
 }
 
+fn _sid_count(
+    i: usize,
+    j: usize,
+    g_pa_i: &[usize],
+    h_pa_i: &[usize],
+    g: &Array2<bool>,
+    p: &Array2<bool>,
+    r: &FxIndexSet<usize>,
+) -> usize {
+    let g_ij_null = !p[[i, j]];
+    let h_ij_null = h_pa_i.binary_search(&j).is_ok();
+
+    if g_ij_null && h_ij_null {
+        return 0;
+    }
+
+    if !g_ij_null && h_ij_null {
+        return 1;
+    }
+
+    if g_pa_i == h_pa_i {
+        return 0;
+    }
+
+    if g.row(i)
+        .iter()
+        .zip(p.column(j))
+        .enumerate()
+        .filter_map(|(k, (&a, &b))| if a && b { Some(k) } else { None })
+        .any(|k| h_pa_i.iter().any(|&l| p[[k, l]]))
+    {
+        return 1;
+    }
+
+    if r.contains(&j) {
+        return 1;
+    }
+
+    0
+}
+
 fn _sid(g: &Array2<bool>, h: &Array2<bool>) -> usize {
     // Initialize the structural intervention distance.
     let mut sid = 0;
     // Get the number of vertices in G.
     let n = g.shape()[1];
-
     // Compute the path matrix of G.
-    let p = path(g);
-
-    // For each vertex i.
+    let p = _path(g);
+    // For each vertex i ...
     for i in 0..n {
-        let g_pa_i: Vec<usize> = Pa!(g, i).collect();
-        let h_pa_i: Vec<usize> = Pa!(h, i).collect();
-
+        // Compute the parents of i in G and H.
+        let g_pa_i: Vec<_> = Pa!(g, i).collect();
+        let h_pa_i: Vec<_> = Pa!(h, i).collect();
         // Compute the vertices reachable from i in G.
-        let r = reachable(g, i, &h_pa_i);
-
+        let r = _reach(g, i, &h_pa_i);
+        // For each vertex j ...
         for j in (0..n).filter(|&j| j != i) {
-            let g_ij_null = !p[[i, j]];
-            let h_ij_null = h_pa_i.binary_search(&j).is_ok();
-
-            if g_ij_null && h_ij_null {
-                continue;
-            }
-
-            if !g_ij_null && h_ij_null {
-                sid += 1;
-                continue;
-            }
-
-            if g_pa_i == h_pa_i {
-                continue;
-            }
-
-            if g.row(i)
-                .iter()
-                .zip(p.column(j))
-                .enumerate()
-                .filter_map(|(k, (&a, &b))| if a && b { Some(k) } else { None })
-                .any(|k| h_pa_i.iter().any(|&l| p[[k, l]]))
-            {
-                sid += 1;
-                continue;
-            }
-
-            if r.contains(&j) {
-                sid += 1;
-            }
+            // Increment the SID count.
+            sid += _sid_count(i, j, &g_pa_i, &h_pa_i, g, &p, &r);
         }
     }
 
     sid
+}
+
+fn _par_sid(g: &Array2<bool>, h: &Array2<bool>) -> usize {
+    // Get the number of vertices in G.
+    let n = g.shape()[1];
+    // Compute the path matrix of G.
+    let p = &_path(g);
+    // For each vertex i ...
+    (0..n)
+        .into_par_iter()
+        .flat_map(|i| {
+            // Compute the parents of i in G and H.
+            let g_pa_i: Vec<_> = Pa!(g, i).collect();
+            let h_pa_i: Vec<_> = Pa!(h, i).collect();
+            // Compute the vertices reachable from i in G.
+            let r = _reach(g, i, &h_pa_i);
+            // For each vertex j ...
+            (0..n).into_par_iter().filter_map(move |j| {
+                if j != i {
+                    // Increment the SID count.
+                    Some(_sid_count(i, j, &g_pa_i, &h_pa_i, g, p, &r))
+                } else {
+                    None
+                }
+            })
+        })
+        .sum()
 }
 
 #[cfg(test)]
@@ -179,7 +218,7 @@ mod test {
             [false, true, true],
             [false, false, true]
         ];
-        let p_pred = path(&g);
+        let p_pred = _path(&g);
         assert_eq!(p_true, p_pred);
 
         // Test with a 4x4 matrix.
@@ -195,7 +234,7 @@ mod test {
             [false, false, true, true],
             [false, false, false, true]
         ];
-        let p_pred = path(&g);
+        let p_pred = _path(&g);
         assert_eq!(p_true, p_pred);
     }
 
@@ -206,12 +245,12 @@ mod test {
             [false, false, true],
             [false, false, false]
         ];
-        assert!(reachable(&g, 0, &[1]).iter().eq(&[0, 1]));
-        assert!(reachable(&g, 0, &[0]).iter().eq(&[0]));
-        assert!(reachable(&g, 0, &[2]).iter().eq(&[0, 1, 2]));
-        assert!(reachable(&g, 0, &[0, 1]).iter().eq(&[0]));
-        assert!(reachable(&g, 0, &[0, 2]).iter().eq(&[0]));
-        assert!(reachable(&g, 0, &[1, 2]).iter().eq(&[0, 1]));
+        assert!(_reach(&g, 0, &[1]).iter().eq(&[0, 1]));
+        assert!(_reach(&g, 0, &[0]).iter().eq(&[0]));
+        assert!(_reach(&g, 0, &[2]).iter().eq(&[0, 1, 2]));
+        assert!(_reach(&g, 0, &[0, 1]).iter().eq(&[0]));
+        assert!(_reach(&g, 0, &[0, 2]).iter().eq(&[0]));
+        assert!(_reach(&g, 0, &[1, 2]).iter().eq(&[0, 1]));
     }
 
     #[test]
@@ -245,6 +284,39 @@ mod test {
 
         assert_eq!(_sid(&g, &h_1), 0);
         assert_eq!(_sid(&g, &h_2), 8);
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn test_par_sid() {
+        // Test from the paper example 1.
+        let g = array![
+            //  X1,    X2,    Y1,    Y2,    Y3
+            [false,  true,  true,  true,  true], // X1
+            [false, false,  true,  true,  true], // X2
+            [false, false, false, false, false], // Y1
+            [false, false, false, false, false], // Y2
+            [false, false, false, false, false], // Y3
+        ];
+        let h_1 = array![
+            //  X1,    X2,    Y1,    Y2,    Y3
+            [false,  true,  true,  true,  true], // X1
+            [false, false,  true,  true,  true], // X2
+            [false, false, false,  true, false], // Y1
+            [false, false, false, false, false], // Y2
+            [false, false, false, false, false], // Y3
+        ];
+        let h_2 = array![
+            //  X1,    X2,    Y1,    Y2,    Y3
+            [false, false,  true,  true,  true], // X1
+            [ true, false,  true,  true,  true], // X2
+            [false, false, false, false, false], // Y1
+            [false, false, false, false, false], // Y2
+            [false, false, false, false, false], // Y3
+        ];
+
+        assert_eq!(_par_sid(&g, &h_1), 0);
+        assert_eq!(_par_sid(&g, &h_2), 8);
     }
 }
 
@@ -292,10 +364,18 @@ fn sid(g: Robj, h: Robj) -> usize {
     _sid(&robj_to_array2_bool(g), &robj_to_array2_bool(h))
 }
 
+/// Compute the SID between two adjacency matrices in parallel.
+/// @export
+#[extendr]
+fn par_sid(g: Robj, h: Robj) -> usize {
+    _par_sid(&robj_to_array2_bool(g), &robj_to_array2_bool(h))
+}
+
 // Macro to generate exports.
 // This ensures exported functions are registered with R.
 // See corresponding C code in `entrypoint.c`.
 extendr_module! {
     mod sidrs;
     fn sid;
+    fn par_sid;
 }
