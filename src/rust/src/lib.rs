@@ -51,12 +51,10 @@ fn path(g: &Array2<bool>) -> Array2<bool> {
     p.diag_mut().fill(true);
 
     // Compute the path matrix using the Floyd-Warshall algorithm.
-    for _ in 0..n {
-        for i in 0..n {
-            for j in 0..n {
-                for k in 0..n {
-                    p[[i, j]] = p[[i, j]] || (p[[i, k]] && p[[k, j]]);
-                }
+    for i in 0..n {
+        for j in 0..n {
+            for k in 0..n {
+                p[[i, j]] = p[[i, j]] || (p[[i, k]] && p[[k, j]]);
             }
         }
     }
