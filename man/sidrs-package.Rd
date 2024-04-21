@@ -4,9 +4,9 @@
 \name{sidrs-package}
 \alias{sidrs}
 \alias{sidrs-package}
-\title{sidrs: Compute the SID between two Adjacency Matrices.}
+\title{sidrs: Compute the Structural Intervention Distance (SID) for DAGs.}
 \description{
-Compute the SID between two adjacency matrices..
+Compute the structural intervention distance for DAGs.
 }
 \author{
 \strong{Maintainer}: Alessio Zanga \email{alessio.zanga@outlook.it} (\href{https://orcid.org/0000-0003-4423-2121}{ORCID})
