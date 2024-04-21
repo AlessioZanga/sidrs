@@ -48,9 +48,6 @@ fn _path(g: &Array2<bool>) -> Array2<bool> {
     // Initialize the path matrix.
     let mut p = g.to_owned();
 
-    // NOTE: We set the diagonal to true, as the path from a vertex to itself is always true.
-    p.diag_mut().fill(true);
-
     // Compute the path matrix using the Floyd-Warshall algorithm.
     for i in 0..n {
         for j in 0..n {
@@ -64,7 +61,11 @@ fn _path(g: &Array2<bool>) -> Array2<bool> {
 }
 
 // Get the reachable vertices from x given z in a graph G.
-fn _reach(g: &Array2<bool>, x: usize, z: &[usize]) -> FxIndexSet<usize> {
+fn _reach_non_directed(g: &Array2<bool>, x: usize, z: &FxIndexSet<usize>) -> FxIndexSet<usize> {
+    // Remove outgoing edges from X.
+    let mut g = g.to_owned();
+    g.row_mut(x).fill(false);
+
     // Phase I - Get all ancestors of Z.
     let an_z: FxIndexSet<_> = z.iter().flat_map(|&z| An!(g, z)).collect();
 
@@ -76,6 +77,9 @@ fn _reach(g: &Array2<bool>, x: usize, z: &[usize]) -> FxIndexSet<usize> {
     // Initialize the set of visited vertices.
     let mut visited = FxIndexSet::<(usize, bool)>::default();
     visited.reserve(2 * g.shape()[1]);
+    // Initialize the set of reachable vertices.
+    let mut reachable = FxIndexSet::<usize>::default();
+    reachable.reserve(g.shape()[1]);
 
     // While there are vertices to be visited.
     while let Some((w, d)) = to_be_visited.pop_front() {
@@ -85,6 +89,10 @@ fn _reach(g: &Array2<bool>, x: usize, z: &[usize]) -> FxIndexSet<usize> {
         }
         // Add current vertex to visited set.
         visited.insert((w, d));
+        // If W is not in Z, add W to reachable set.
+        if !z.contains(&w) {
+            reachable.insert(w);
+        }
         // Trail up through W if W not in Z.
         if d && !z.contains(&w) {
             // Add parents of W to to-be-visited set.
@@ -105,45 +113,37 @@ fn _reach(g: &Array2<bool>, x: usize, z: &[usize]) -> FxIndexSet<usize> {
     }
 
     // Return the set of visited vertices.
-    visited.into_iter().map(|(w, _)| w).collect()
+    reachable
 }
 
 fn _sid_count(
-    i: usize,
-    j: usize,
-    g_pa_i: &[usize],
-    h_pa_i: &[usize],
-    g: &Array2<bool>,
+    x: usize,
+    y: usize,
+    g_ch_x: &[usize],
+    h_pa_x: &FxIndexSet<usize>,
     p: &Array2<bool>,
     r: &FxIndexSet<usize>,
 ) -> usize {
-    let g_ij_null = !p[[i, j]];
-    let h_ij_null = h_pa_i.binary_search(&j).is_ok();
-
-    if g_ij_null && h_ij_null {
-        return 0;
-    }
-
-    if !g_ij_null && h_ij_null {
-        return 1;
-    }
-
-    if g_pa_i == h_pa_i {
-        return 0;
-    }
-
-    if g.row(i)
-        .iter()
-        .zip(p.column(j))
-        .enumerate()
-        .filter_map(|(k, (&a, &b))| if a && b { Some(k) } else { None })
-        .any(|k| h_pa_i.iter().any(|&l| p[[k, l]]))
-    {
-        return 1;
-    }
-
-    if r.contains(&j) {
-        return 1;
+    // Check if Y is a parent of X in H.
+    if h_pa_x.contains(&y) {
+        // Check if Y is a descendant of X in G.
+        if p[[x, y]] {
+            // Increment the SID count.
+            return 1;
+        }
+    } else {
+        // Check if Y is reachable from X in G from a non-directed path.
+        if r.contains(&y) {
+            // Increment the SID count.
+            return 1;
+        }
+        // Get the vertices W onh_pa_x all directed paths from X to Y.
+        let mut w = g_ch_x.iter().filter(|&&w| p[[w, y]]);
+        // Check if there is a vertex W s.t. Z is a descendant of W.
+        if w.any(|&w| h_pa_x.iter().any(|&z| w == z || p[[w, z]])) {
+            // Increment the SID count.
+            return 1;
+        }
     }
 
     0
@@ -157,16 +157,16 @@ fn _sid(g: &Array2<bool>, h: &Array2<bool>) -> usize {
     // Compute the path matrix of G.
     let p = _path(g);
     // For each vertex i ...
-    for i in 0..n {
+    for x in 0..n {
         // Compute the parents of i in G and H.
-        let g_pa_i: Vec<_> = Pa!(g, i).collect();
-        let h_pa_i: Vec<_> = Pa!(h, i).collect();
-        // Compute the vertices reachable from i in G.
-        let r = _reach(g, i, &h_pa_i);
+        let g_ch_x: Vec<_> = Ch!(g, x).collect();
+        let h_pa_x: FxIndexSet<_> = Pa!(h, x).collect();
+        // Compute the vertices reachable from i in G via non-directed paths.
+        let r = _reach_non_directed(g, x, &h_pa_x);
         // For each vertex j ...
-        for j in (0..n).filter(|&j| j != i) {
+        for y in (0..n).filter(|&y| x != y) {
             // Increment the SID count.
-            sid += _sid_count(i, j, &g_pa_i, &h_pa_i, g, &p, &r);
+            sid += _sid_count(x, y, &g_ch_x, &h_pa_x, &p, &r);
         }
     }
 
@@ -181,17 +181,17 @@ fn _par_sid(g: &Array2<bool>, h: &Array2<bool>) -> usize {
     // For each vertex i ...
     (0..n)
         .into_par_iter()
-        .flat_map(|i| {
+        .flat_map(|x| {
             // Compute the parents of i in G and H.
-            let g_pa_i: Vec<_> = Pa!(g, i).collect();
-            let h_pa_i: Vec<_> = Pa!(h, i).collect();
-            // Compute the vertices reachable from i in G.
-            let r = _reach(g, i, &h_pa_i);
+            let g_ch_x: Vec<_> = Ch!(g, x).collect();
+            let h_pa_x: FxIndexSet<_> = Pa!(h, x).collect();
+            // Compute the vertices reachable from i in G via non-directed paths.
+            let r = _reach_non_directed(g, x, &h_pa_x);
             // For each vertex j ...
-            (0..n).into_par_iter().filter_map(move |j| {
-                if j != i {
+            (0..n).into_par_iter().filter_map(move |y| {
+                if x != y {
                     // Increment the SID count.
-                    Some(_sid_count(i, j, &g_pa_i, &h_pa_i, g, p, &r))
+                    Some(_sid_count(x, y, &g_ch_x, &h_pa_x, p, &r))
                 } else {
                     None
                 }
@@ -214,9 +214,9 @@ mod test {
             [false, false, false]
         ];
         let p_true = array![
-            [true, true, true],
             [false, true, true],
-            [false, false, true]
+            [false, false, true],
+            [false, false, false]
         ];
         let p_pred = _path(&g);
         assert_eq!(p_true, p_pred);
@@ -229,28 +229,28 @@ mod test {
             [false, false, false, false]
         ];
         let p_true = array![
-            [true, true, true, true],
             [false, true, true, true],
             [false, false, true, true],
-            [false, false, false, true]
+            [false, false, false, true],
+            [false, false, false, false]
         ];
         let p_pred = _path(&g);
         assert_eq!(p_true, p_pred);
     }
 
     #[test]
-    fn test_d_sep() {
+    fn test_reach_non_directed() {
+        // X -> Y, Z -> X, Z -> Y.
         let g = array![
-            [false, true, false],
-            [false, false, true],
-            [false, false, false]
+            // X, Y, Z
+            [false, true, false],  // X
+            [false, false, false], // Y
+            [true, true, false],   // Z
         ];
-        assert!(_reach(&g, 0, &[1]).iter().eq(&[0, 1]));
-        assert!(_reach(&g, 0, &[0]).iter().eq(&[0]));
-        assert!(_reach(&g, 0, &[2]).iter().eq(&[0, 1, 2]));
-        assert!(_reach(&g, 0, &[0, 1]).iter().eq(&[0]));
-        assert!(_reach(&g, 0, &[0, 2]).iter().eq(&[0]));
-        assert!(_reach(&g, 0, &[1, 2]).iter().eq(&[0, 1]));
+
+        assert!(_reach_non_directed(&g, 0, &[].into_iter().collect())
+            .iter()
+            .eq(&[0, 2, 1]));
     }
 
     #[test]
@@ -282,8 +282,8 @@ mod test {
             [false, false, false, false, false], // Y3
         ];
 
-        assert_eq!(_sid(&g, &h_1), 0);
-        assert_eq!(_sid(&g, &h_2), 8);
+        assert_eq!(0, _sid(&g, &h_1));
+        assert_eq!(8, _sid(&g, &h_2));
     }
 
     #[test]
@@ -315,8 +315,8 @@ mod test {
             [false, false, false, false, false], // Y3
         ];
 
-        assert_eq!(_par_sid(&g, &h_1), 0);
-        assert_eq!(_par_sid(&g, &h_2), 8);
+        assert_eq!(0, _par_sid(&g, &h_1));
+        assert_eq!(8, _par_sid(&g, &h_2));
     }
 }
 
